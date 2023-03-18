@@ -12,7 +12,7 @@
 #define SERVER_IP_ADDR "127.0.0.1"
 
 int main(int argc, char const *argv[]) {
-    int client_fd;
+    int client_fd, n;
     struct sockaddr_in server_address;
     char buffer[BUFFER_SIZE] = {0};
 
@@ -23,6 +23,7 @@ int main(int argc, char const *argv[]) {
     }
 
     // Setting up the server address structure
+    memset(&server_address, '0', sizeof(server_address));
     server_address.sin_family = AF_INET;
     server_address.sin_port = htons(PORT);
 
@@ -38,13 +39,37 @@ int main(int argc, char const *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    // Sending a message to the server
-    char *message = "Hello from the client!";
-    send(client_fd, message, strlen(message), 0);
+    while (1) {
+        // Read command from user
+        printf("Enter command: ");
+        fgets(buffer, BUFFER_SIZE, stdin);
+        buffer[strlen(buffer)-1] = '\0';
 
-    // Receiving a message from the server
-    int valread = read(client_fd, buffer, BUFFER_SIZE);
-    printf("Server says: %s\n", buffer);
+        // Send command to server
+        if (send(client_fd, buffer, strlen(buffer), 0) != strlen(buffer)) {
+            perror("TCP Client - Send Error");
+            exit(EXIT_FAILURE);
+        }
+
+        // Exit if user types "quit"
+        if (strcmp(buffer, "quit") == 0) {
+            break;
+        }
+
+        // Receive response from server
+        bzero(buffer, BUFFER_SIZE);
+        n = read(client_fd, buffer, BUFFER_SIZE - 1);
+        if (n < 0) {
+            perror("TCP Client - Read Error");
+            exit(EXIT_FAILURE);
+        }
+        if (n == 0) {
+            printf("Server disconnected.\n");
+            break;
+        }
+        buffer[n] = '\0';
+        printf("Server response: %s\n", buffer);
+    }
 
     close(client_fd);
     return 0;

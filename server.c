@@ -5,13 +5,52 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <sys/wait.h>
 #include <errno.h>
 
 #define PORT 8080
+// Allowing server to listen to 10 clients at a time
 #define MAX_CLIENTS 10
 #define BUFFER_SIZE 1024
 
+void processClient(int socket_fd) {
+    char buffer[BUFFER_SIZE];
+    int n, fd;
+    while(1) {
+        bzero(buffer, BUFFER_SIZE);
+        n = read(socket_fd, buffer, BUFFER_SIZE - 1);
+        if (n < 0) {
+            perror("TCP Server - Read Error");
+            exit(EXIT_FAILURE);
+        }
+        if (n == 0) {
+            printf("Client disconnected.\n");
+            break;
+        }
+        
+        buffer[n] = '\0';
+        printf("Command received: %s\n", buffer);
+
+        if (strcmp(buffer, "quit") == 0) {
+            break;
+        }
+        else {
+            if (send(socket_fd, buffer, strlen(buffer), 0) != strlen(buffer)) {
+                perror("TCP Server - Send Error");
+                close(socket_fd);
+                continue;
+            }
+
+            printf("Sent response to client: %s\n", buffer);
+        }
+    }
+    printf("Client disconnected.\n");
+    close(socket_fd);
+    exit(EXIT_SUCCESS);
+}
+
 int main(int argc, char const *argv[]) {
+    int num_of_clients = 0;
     int server_fd, client_fd, optval;
     struct sockaddr_in address;
     int addrlen = sizeof(address);
@@ -24,7 +63,7 @@ int main(int argc, char const *argv[]) {
     */
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0) {
-        perror("socket error");
+        perror("TCP Server - Socket Error");
         exit(EXIT_FAILURE);
     }
 
@@ -35,7 +74,7 @@ int main(int argc, char const *argv[]) {
      * option_value: 1 - Needs value for processing the incoming request
     */
     if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) < 0) {
-        perror("setsockopt error");
+        perror("TCP Server - setsockopt Error");
         exit(EXIT_FAILURE);
     }
 
@@ -45,19 +84,20 @@ int main(int argc, char const *argv[]) {
      * sin_addr.s_addr: INADDR_ANY - Accessing default interface for gateway
      * sin_port: 8080
     */
+    memset(&address, '0', sizeof(address));
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY;
     address.sin_port = htons(PORT);
 
     // Binding the address structure to the socket openend
     if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
-        perror("bind error");
+        perror("TCP Server - Bind Error");
         exit(EXIT_FAILURE);
     }
 
     // Connect to the network and await until client connects
     if (listen(server_fd, MAX_CLIENTS) < 0) {
-        perror("listen error");
+        perror("TCP Server - Listen Error");
         exit(EXIT_FAILURE);
     }
 
@@ -67,39 +107,30 @@ int main(int argc, char const *argv[]) {
         // Assigning the connecting client info to the file descriptor
         client_fd = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen);
         if (client_fd < 0) {
-            perror("accept error");
+            perror("TCP Server - Accept Error");
             continue;
         }
 
         printf("Client connected.\n");
 
-        char buffer[BUFFER_SIZE];
-        int valread = read(client_fd, buffer, BUFFER_SIZE);
-        if (valread < 0) {
-            perror("read error");
-            close(client_fd);
-            continue;
+        childpid = fork();
+        if (childpid < 0) {
+            perror("TCP Server - Fork Error");
+            exit(EXIT_FAILURE);
         }
 
-        printf("Message received from Client:\n%s\n", buffer);
-
-        // if (strncmp(buffer, "Hello", 5) != 0) {
-        //     printf("Invalid message from client.\n");
-        //     close(client_fd);
-        //     continue;
-        // }
-
-        char* response = "I am server";
-        if (send(client_fd, response, strlen(response), 0) != strlen(response)) {
-            perror("send error");
+        if (childpid == 0) {
+            // Child process
+            close(server_fd);
+            processClient(client_fd);
+            exit(EXIT_SUCCESS);
+        } else {
+            // Parent process
+            num_of_clients++;
+            printf("Total Clients connected till now: %d\n", num_of_clients);
             close(client_fd);
-            continue;
+            while (waitpid(-1, NULL, WNOHANG) > 0);
         }
-
-        printf("Sent response to client: %s\n", response);
-
-        printf("Disconnecting client.\n");
-        close(client_fd);
     }
 
     close(server_fd);
