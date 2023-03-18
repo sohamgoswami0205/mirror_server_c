@@ -7,23 +7,27 @@ Multiple clients can connect to the server from different machines and can reque
 per the commands listed in section 2<br />
 The server, the mirror and the client processes must run on different machines and<br />
 must communicate using sockets only.<br />
-Section 1 (Server)<br />
-    The server and an identical copy of the server called the mirror [see section 3] must<br />
-    both run before any of the client (s) run and both of them must wait for request/s<br />
-    from client/s<br />
-    Upon receiving a connection request from a client, the server forks a child process<br />
-    that services the client request exclusively in a function called processclient() and<br />
-    (the server) returns to listening to requests from other clients.<br />
-    The processclient() function enters an infinite loop waiting for the client to<br />
-    send a command<br />
-    Upon the receipt of a command from the client, processclient() performs the<br />
-    action required to process the command as per the requirements listed in<br />
-    section 2 and returns the result to the client<br />
-    Upon the receipt of quit from the client, processclient() exits.<br />
-    Note: for each client request, the server must fork a separate process with the<br />
-    processclient() function to service the request and then go back to listening to<br />
-    requests from other clients<br />
-Section 2 (Client)<br />
+<strong>Section 1 (Server)</strong><br />
+    <ul>
+    <li>The server and an identical copy of the server called the mirror [see section 3] must<br />
+        both run before any of the client (s) run and both of them must wait for request/s<br />
+        from client/s</li><br />
+    <li>Upon receiving a connection request from a client, the server forks a child process<br />
+        that services the client request exclusively in a function called processclient() and<br />
+        (the server) returns to listening to requests from other clients.<br />
+        <ul>
+        <li>The processclient() function enters an infinite loop waiting for the client to<br />
+            send a command</li><br />
+        <li>Upon the receipt of a command from the client, processclient() performs the<br />
+            action required to process the command as per the requirements listed in<br />
+            section 2 and returns the result to the client</li><br />
+    </li>
+    <li>Upon the receipt of quit from the client, processclient() exits.</li><br />
+    <li>Note: for each client request, the server must fork a separate process with the<br />
+        processclient() function to service the request and then go back to listening to<br />
+        requests from other clients</li><br />
+    </ul>
+<strong>Section 2 (Client)</strong><br />
     The client process runs an infinite loop waiting for the user to enter one of the commands.<br />
     Note: The commands are not Linux commands and are defined(in this project) to denote the<br />
     action to be performed by the server.<br />
@@ -77,7 +81,7 @@ Section 2 (Client)<br />
     incorrect.<br />
     It is the responsibility of the client process to unzip the tar files whenever the option<br />
     is specified.<br />
-Section 3 Alternating Between the Server and the Mirror<br />
+    <strong>Section 3 Alternating Between the Server and the Mirror</strong><br />
     The server and the mirror (the server’s copy possibly with a few<br />
     additions/changes) are to run on two different machines/terminals.<br />
     The first 4 client connections are to be handled by the server.<br />
