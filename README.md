@@ -6,7 +6,7 @@ file/files requested to the client (or an appropriate message otherwise).
 Multiple clients can connect to the server from different machines and can request file/s as
 per the commands listed in section 2
 The server, the mirror and the client processes must run on different machines and
-must communicate using sockets only.
+must communicate using sockets only.<br />
 Section 1 (Server)
     The server and an identical copy of the server called the mirror [see section 3] must
     both run before any of the client (s) run and both of them must wait for request/s
