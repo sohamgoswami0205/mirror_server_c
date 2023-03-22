@@ -13,28 +13,37 @@
 
 int main(int argc, char const *argv[]) {
     int client_fd, n;
-    struct sockaddr_in server_address;
+    struct sockaddr_in address;
     char buffer[BUFFER_SIZE] = {0};
 
-    // Creating a client socket
+    /**
+     * Creating client socket file descriptor
+     * AF_INET: IPv4 connection
+     * SOCK_STREAM: TCP/IP protocol
+    */
     if ((client_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         perror("TCP Client - Socket Creation Error\n");
         exit(EXIT_FAILURE);
     }
 
-    // Setting up the server address structure
-    memset(&server_address, '0', sizeof(server_address));
-    server_address.sin_family = AF_INET;
-    server_address.sin_port = htons(PORT);
+    /**
+     * Setting up the socket address structure values
+     * sin_family: AF_INET - IPv4 connections
+     * sin_addr.s_addr: INADDR_ANY - Accessing default interface for gateway
+     * sin_port: 8080
+    */
+    memset(&address, '0', sizeof(address));
+    address.sin_family = AF_INET;
+    address.sin_port = htons(PORT);
 
     // Convert IPv4 and IPv6 addresses from text to binary form
-    if (inet_pton(AF_INET, SERVER_IP_ADDR, &server_address.sin_addr) <= 0) {
+    if (inet_pton(AF_INET, SERVER_IP_ADDR, &address.sin_addr) <= 0) {
         perror("TCP Client -Invalid Address");
         exit(EXIT_FAILURE);
     }
 
     // Connecting to the server
-    if (connect(client_fd, (struct sockaddr *)&server_address, sizeof(server_address)) < 0) {
+    if (connect(client_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
         perror("TCP Client - Connection Error");
         exit(EXIT_FAILURE);
     }

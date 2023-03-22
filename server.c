@@ -57,7 +57,7 @@ int main(int argc, char const *argv[]) {
     pid_t childpid;
 
     /**
-     * Storing server socket file descriptor
+     * Creating server socket file descriptor
      * AF_INET: IPv4 connection
      * SOCK_STREAM: TCP/IP protocol
     */
