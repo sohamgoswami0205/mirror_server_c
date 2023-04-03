@@ -14,6 +14,8 @@
 #define BUFFER_SIZE 1024
 #define SERVER_IP_ADDR "127.0.0.1"
 #define TAR_FILE_NAME "temp.tar.gz"
+#define MAX_FILES 6
+#define MAX_FILENAME_LEN 50
 
 // Function to handle receiving stream of file
 int receive_files(int socket_fd) {
@@ -34,6 +36,8 @@ int receive_files(int socket_fd) {
     long tar_file_size = atol(size_buffer);
     printf("File size received: %ld \n", tar_file_size);
 
+    char buffer[BUFFER_SIZE];
+
     sprintf(size_buffer, "%ld", tar_file_size);
     if (send(socket_fd, size_buffer, strlen(size_buffer), 0) != strlen(size_buffer)) {
         perror("Error acknowledging to server");
@@ -41,8 +45,23 @@ int receive_files(int socket_fd) {
         return 1;
     }
 
+    if (strcmp(size_buffer, "0") == 0) {
+        memset(buffer, 0, BUFFER_SIZE);
+        int n = read(socket_fd, buffer, BUFFER_SIZE - 1);
+        if (n < 0) {
+            perror("TCP Client - Read Error");
+            exit(EXIT_FAILURE);
+        }
+        if (n == 0) {
+            printf("Server disconnected.\n");
+        }
+        buffer[n] = '\0';
+        printf("Server response: \n%s\n", buffer);
+        // Returning 1 to avoid unzipping command to execute
+        return 1;
+    }
+
     // Receive the tar file contents from the server
-    char buffer[BUFFER_SIZE];
     long bytes_received = 0;
     size_t n;
     while (bytes_received < tar_file_size && (n = recv(socket_fd, buffer, BUFFER_SIZE, 0)) > 0) {
@@ -80,6 +99,36 @@ int validate_dates(char* date1, char* date2) {
     } else {
         return 0;
     }
+}
+
+void read_filenames(char* buffer, char filenames[MAX_FILES][MAX_FILENAME_LEN], int* num_files, int* unzip_flag) {
+    char* token;
+    char delim[] = " ";
+    int i = 0;
+
+    // Set the unzip flag to 0 by default
+    *unzip_flag = 0;
+
+    // Get the first token
+    token = strtok(buffer, delim);
+
+    // Skip the first token (which is "getfiles")
+    token = strtok(NULL, delim);
+
+    // Read the filenames
+    while (token != NULL && i < MAX_FILES) {
+        if (strcmp(token, "-u") == 0) {
+            // If "-u" is present, set the unzip flag to 1
+            *unzip_flag = 1;
+        } else {
+            // Otherwise, store the filename in the array
+            strncpy(filenames[i], token, MAX_FILENAME_LEN);
+            i++;
+        }
+        token = strtok(NULL, delim);
+    }
+
+    *num_files = i;
 }
 
 void send_command(int client_fd, char* buffer) {
@@ -167,6 +216,30 @@ int main(int argc, char const *argv[]) {
             int receive_status = receive_files(client_fd);
             int unzip = strncmp(unzip_status, "-u", strlen("-u")) == 0 ? 1 : 0;
             if (unzip && !receive_status) {
+                printf("Unzipping %s\n", TAR_FILE_NAME);
+                char system_call[BUFFER_SIZE] = "tar -xzvf";
+                strcat(system_call, TAR_FILE_NAME);
+                system(system_call);
+            }
+        } else if (strncmp(buffer, "getfiles", strlen("getfiles")) == 0) {
+            char filenames[MAX_FILES][MAX_FILENAME_LEN];
+            int num_files, unzip_flag;
+            send_command(client_fd, buffer);
+            read_filenames(buffer, filenames, &num_files, &unzip_flag);
+            int receive_status = receive_files(client_fd);
+            if (unzip_flag && !receive_status) {
+                printf("Unzipping %s\n", TAR_FILE_NAME);
+                char system_call[BUFFER_SIZE] = "tar -xzvf";
+                strcat(system_call, TAR_FILE_NAME);
+                system(system_call);
+            }
+        } else if (strncmp(buffer, "gettargz", strlen("gettargz")) == 0) {
+            char extensions[MAX_FILES][MAX_FILENAME_LEN];
+            int num_extensions, unzip_flag;
+            send_command(client_fd, buffer);
+            read_filenames(buffer, extensions, &num_extensions, &unzip_flag);
+            int receive_status = receive_files(client_fd);
+            if (unzip_flag && !receive_status) {
                 printf("Unzipping %s\n", TAR_FILE_NAME);
                 char system_call[BUFFER_SIZE] = "tar -xzvf";
                 strcat(system_call, TAR_FILE_NAME);

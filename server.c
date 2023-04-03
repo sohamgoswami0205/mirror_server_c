@@ -9,12 +9,15 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <dirent.h>
 
 #define PORT 8080
 // Allowing server to listen to 10 clients at a time
 #define MAX_CLIENTS 10
 #define BUFFER_SIZE 1024
 #define TAR_FILE_NAME "server_temp.tar.gz"
+#define MAX_FILES 6
+#define MAX_FILENAME_LEN 50
 
 // Function to Find the file in the server from /home/soham
 char* findfile(char* filename) {
@@ -125,6 +128,223 @@ void dgetfiles(int socket_fd, char* date1, char* date2) {
     send_tar_file(socket_fd);
 }
 
+int find_files(const char *dir_name, const char *filename, char *tar_file) {
+    int found = 0;
+    DIR *dir;
+    struct dirent *entry;
+    struct stat file_info;
+    char path[PATH_MAX];
+
+    if ((dir = opendir(dir_name)) == NULL) {
+        perror("opendir");
+        return 0;
+    }
+
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+
+        snprintf(path, PATH_MAX, "%s/%s", dir_name, entry->d_name);
+
+        if (lstat(path, &file_info) < 0) {
+            perror("lstat");
+            continue;
+        }
+
+        if (S_ISDIR(file_info.st_mode)) {
+            find_files(path, filename, tar_file);
+        } else if (S_ISREG(file_info.st_mode)) {
+            if (strcmp(entry->d_name, filename) == 0) {
+                strncat(tar_file, " ", BUFFER_SIZE - strlen(tar_file) - 1);
+                strncat(tar_file, path, BUFFER_SIZE - strlen(tar_file) - 1);
+                printf("File found at: %s\n", path);
+                found = 1;
+            }
+        }
+    }
+
+    closedir(dir);
+    return found;
+}
+
+int find_file_paths(char *root_dir, char *filename, char *tar_file) {
+    const char *homedir = getenv("HOME");
+    if (homedir == NULL) {
+        printf("Could not get HOME directory\n");
+        return 0;
+    }
+
+    char path[PATH_MAX];
+    snprintf(path, PATH_MAX, "%s/%s", homedir, filename);
+
+    return find_files(homedir, filename, tar_file);
+}
+
+// Function to get the files
+char* getfiles(int socket_fd, char files[MAX_FILES][MAX_FILENAME_LEN], int num_files) {
+    // Get the current directory path
+    char *dir_path = getenv("HOME");
+    if (dir_path == NULL) {
+        fprintf(stderr, "Error getting HOME directory path\n");
+        return NULL;
+    }
+
+    // Create the tar command
+    char tar_cmd[BUFFER_SIZE] = "tar -czvf ";
+    strcat(tar_cmd, TAR_FILE_NAME);
+
+    // To send only files and not the entire directory path in tar.gz file
+    // strcat(tar_cmd, " --transform \'s#.*/##\' ");
+
+    int file_found = 0;
+    for (int i = 0; i < num_files; i++) {
+        printf("Filename: %s\n", files[i]);
+        char file_path[BUFFER_SIZE];
+        snprintf(file_path, BUFFER_SIZE, "%s/%s", dir_path, files[i]);
+        
+        file_found = find_file_paths(dir_path, files[i], tar_cmd);
+    }
+
+    if (file_found) {
+        printf("Atleast 1 file found\n");
+        // Run the tar command
+        system(tar_cmd);
+
+        // Send the tar file to the client
+        FILE *tar_file = fopen(TAR_FILE_NAME, "r");
+        if (tar_file == NULL) {
+            fprintf(stderr, "Error opening tar file\n");
+            return NULL;
+        }
+        fclose(tar_file);
+        // create socket and send the tar file to client
+        send_tar_file(socket_fd);
+    } else {
+        printf("No file found.\n");
+        if (send(socket_fd, "0", strlen("0"), 0) != strlen("0")) {
+            perror("Error sending tar file size to client");
+            return NULL;
+        }
+        return "No file found.";
+    }
+
+    return NULL;
+}
+
+void gettargz_recursive(const char *dir_path, char extensions[MAX_FILES][MAX_FILENAME_LEN], int num_extensions, FILE *temp_list) {
+    DIR *dir = opendir(dir_path);
+    if (!dir) {
+        printf("Error: could not open directory %s\n", dir_path);
+        return;
+    }
+
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_type == DT_REG) {
+            // This is a regular file
+            char *name = entry->d_name;
+            for (int i = 0; i < num_extensions; i++) {
+                char *extension = extensions[i];
+                int len_ext = strlen(extension);
+                int len_name = strlen(name);
+                if (len_name >= len_ext && strcmp(name + len_name - len_ext, extension) == 0) {
+                    // This file has the matching extension, add it to the list
+                    fprintf(temp_list, "%s/%s\n", dir_path, name);
+                    break;
+                }
+            }
+        } else if (entry->d_type == DT_DIR && strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
+            // This is a directory, recursively search it
+            char subdir_path[BUFFER_SIZE];
+            snprintf(subdir_path, sizeof(subdir_path), "%s/%s", dir_path, entry->d_name);
+            gettargz_recursive(subdir_path, extensions, num_extensions, temp_list);
+        }
+    }
+
+    closedir(dir);
+}
+
+char* gettargz(int socket_fd, char extensions[MAX_FILES][MAX_FILENAME_LEN], int num_extensions) {
+    int file_found = 0;
+    // Create a temporary file to store the list of matching files
+    FILE *temp_list = tmpfile();
+    if (!temp_list) {
+        printf("Error: could not create temporary file\n");
+        return NULL;
+    }
+
+    // Recursively search for files with matching extensions
+    gettargz_recursive(getenv("HOME"), extensions, num_extensions, temp_list);
+    rewind(temp_list);
+    char filename[BUFFER_SIZE];
+
+    while (fgets(filename, sizeof(filename), temp_list) != NULL) {
+        // Remove the newline character at the end of the filename
+        filename[strcspn(filename, "\n")] = 0;
+        file_found++;
+    }
+
+    if (file_found) {
+        printf("Atleast 1 file found\n");
+        // Create a tar file containing the matching files
+        rewind(temp_list);
+        char command[BUFFER_SIZE] = "tar -czvf ";
+        strcat(command, TAR_FILE_NAME);
+        char filename[BUFFER_SIZE];
+        while (fgets(filename, sizeof(filename), temp_list) != NULL) {
+            // Remove the newline character at the end of the filename
+            filename[strcspn(filename, "\n")] = 0;
+            // Add the filename to the tar command
+            strcat(command, " ");
+            strcat(command, filename);
+        }
+        int result = system(command);
+        // create socket and send the tar file to client
+        send_tar_file(socket_fd);
+        fclose(temp_list);
+    } else {
+        printf("No file found.\n");
+        if (send(socket_fd, "0", strlen("0"), 0) != strlen("0")) {
+            perror("Error sending tar file size to client");
+            return NULL;
+        }
+        fclose(temp_list);
+        return "No file found.";
+    }
+    return NULL;
+}
+
+void read_filenames(char* buffer, char filenames[MAX_FILES][MAX_FILENAME_LEN], int* num_files, int* unzip_flag) {
+    char* token;
+    char delim[] = " ";
+    int i = 0;
+
+    // Set the unzip flag to 0 by default
+    *unzip_flag = 0;
+
+    // Get the first token
+    token = strtok(buffer, delim);
+
+    // Skip the first token (which is "getfiles")
+    token = strtok(NULL, delim);
+
+    // Read the filenames
+    while (token != NULL && i < MAX_FILES) {
+        if (strcmp(token, "-u") == 0) {
+            // If "-u" is present, set the unzip flag to 1
+            *unzip_flag = 1;
+        } else {
+            // Otherwise, store the filename in the array
+            strncpy(filenames[i], token, MAX_FILENAME_LEN);
+            i++;
+        }
+        token = strtok(NULL, delim);
+    }
+
+    *num_files = i;
+}
+
 int processClient(int socket_fd) {
     char *result;
     char buffer[BUFFER_SIZE];
@@ -164,6 +384,22 @@ int processClient(int socket_fd) {
             dgetfiles(socket_fd, min_date, max_date);
             result = NULL;
             continue;
+        } else if (strncmp(buffer, "getfiles", strlen("getfiles")) == 0) {
+            char filenames[MAX_FILES][MAX_FILENAME_LEN];
+            int num_files, unzip_flag;
+            read_filenames(buffer, filenames, &num_files, &unzip_flag);
+            result = getfiles(socket_fd, filenames, num_files);
+            if (result == NULL) {
+                continue;
+            }
+        } else if (strncmp(buffer, "gettargz", strlen("gettargz")) == 0) {
+            char extensions[MAX_FILES][MAX_FILENAME_LEN];
+            int num_extensions, unzip_flag;
+            read_filenames(buffer, extensions, &num_extensions, &unzip_flag);
+            result = gettargz(socket_fd, extensions, num_extensions);
+            if (result == NULL) {
+                continue;
+            }
         } else if (strcmp(buffer, "quit") == 0) {
             // Client disconnecting from the server
             printf("Client Quitting.\n");
