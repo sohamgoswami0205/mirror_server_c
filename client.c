@@ -13,9 +13,12 @@
 #define PORT 8080
 #define BUFFER_SIZE 1024
 #define SERVER_IP_ADDR "127.0.0.1"
+#define CONN_SUCCESS "success"
 #define TAR_FILE_NAME "temp.tar.gz"
 #define MAX_FILES 6
 #define MAX_FILENAME_LEN 50
+#define IP_LENGTH 16
+#define PORT_LENGTH 6
 
 // Function to handle receiving stream of file
 int receive_files(int socket_fd) {
@@ -174,6 +177,57 @@ int main(int argc, char const *argv[]) {
     if (connect(client_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
         perror("TCP Client - Connection Error");
         exit(EXIT_FAILURE);
+    }
+
+    if (recv(client_fd, buffer, BUFFER_SIZE, 0) == -1) {
+        perror("Error receiving tar file size from server");
+    }
+
+    printf("Buffer: %s\n", buffer);
+    if (strcmp(buffer, CONN_SUCCESS) == 0) {
+        printf("Connected to server successfully.\n");
+    } else {
+        close(client_fd);
+        client_fd = 0;
+        if ((client_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+            perror("TCP Client - Socket Creation Error\n");
+            exit(EXIT_FAILURE);
+        }
+        char mirror_ip[IP_LENGTH], mirror_port[PORT_LENGTH];
+        char *ip, *port;
+        char buffer_copy[BUFFER_SIZE];
+        strcpy(buffer_copy, buffer);
+        ip = strtok(buffer_copy, ":");
+        port = strtok(NULL, ":");
+        strncpy(mirror_ip, ip, sizeof(mirror_ip));
+        strncpy(mirror_port, port, sizeof(mirror_port));
+        printf("Port: %s, IP: %s\n", mirror_port, mirror_ip);
+        memset(&address, '0', sizeof(address));
+        address.sin_family = AF_INET;
+        address.sin_port = htons(atoi(mirror_port));
+        if (inet_pton(AF_INET, mirror_ip, &address.sin_addr) <= 0) {
+            perror("TCP Client -Invalid Address");
+            exit(EXIT_FAILURE);
+        }
+
+        // Connecting to the server
+        if (connect(client_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
+            perror("TCP Client - Connection Error");
+            exit(EXIT_FAILURE);
+        }
+
+        memset(buffer, 0, sizeof(buffer));
+
+        if (recv(client_fd, buffer, BUFFER_SIZE, 0) == -1) {
+            perror("Error receiving tar file size from server");
+        }
+
+        if (strcmp(buffer, CONN_SUCCESS) == 0) {
+            printf("Connected to server successfully.\n");
+        } else {
+            perror("Could not connect to server or mirror");
+            exit(EXIT_FAILURE);
+        }
     }
 
     while (1) {

@@ -11,18 +11,13 @@
 #include <time.h>
 #include <dirent.h>
 
-#define PORT 8080
-#define CONN_SUCCESS "success"
-#define MIRROR_PORT 8081
-#define MIRROR_SERVER_IP_ADDR "127.0.0.1"
-// Allowing server to listen to 10 clients at a time
+#define PORT 8081
+// Allowing server to listen to 4 clients at a time
 #define MAX_CLIENTS 4
 #define BUFFER_SIZE 1024
-#define TAR_FILE_NAME "server_temp.tar.gz"
+#define TAR_FILE_NAME "mirror_server_temp.tar.gz"
 #define MAX_FILES 6
 #define MAX_FILENAME_LEN 50
-#define IP_LENGTH 16
-#define PORT_LENGTH 6
 
 // Function to Find the file in the server from /home/soham
 char* findfile(char* filename) {
@@ -425,109 +420,80 @@ int processClient(int socket_fd) {
     return 0;
 }
 
-int main(int argc, char const *argv[]) {
-    int num_of_clients = 0;
-    int server_fd, client_fd, optval;
+int main(int argc, char *argv[]) {
+    int server_fd, client_fd, optval = 1, num_of_clients = 0;
     struct sockaddr_in address;
     int addrlen = sizeof(address);
     pid_t childpid;
 
-    /**
-     * Creating server socket file descriptor
-     * AF_INET: IPv4 connection
-     * SOCK_STREAM: TCP/IP protocol
-    */
-    server_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (server_fd < 0) {
-        perror("TCP Server - Socket Error");
+    // Create server socket
+    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
+        perror("TCP Server Mirror - Socket Error");
         exit(EXIT_FAILURE);
     }
 
-    optval = 1;
-    /**
-     * level: SOL_SOCKET
-     * option: SO_REUSEADDR - For allowing reuse of local addresses while bind()
-     * option_value: 1 - Needs value for processing the incoming request
-    */
-    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) < 0) {
-        perror("TCP Server - setsockopt Error");
+    // Set server socket options
+    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &optval, sizeof(optval))) {
+        perror("TCP Server Mirror - setsockopt Error");
         exit(EXIT_FAILURE);
     }
 
-    /**
-     * Setting up the socket address structure values
-     * sin_family: AF_INET - IPv4 connections
-     * sin_addr.s_addr: INADDR_ANY - Accessing default interface for gateway
-     * sin_port: 8080
-    */
+    // Bind server socket to port
     memset(&address, '0', sizeof(address));
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY;
     address.sin_port = htons(PORT);
-
-    // Binding the address structure to the socket openend
     if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
-        perror("TCP Server - Bind Error");
+        perror("TCP Server Mirror - Bind Error");
         exit(EXIT_FAILURE);
     }
 
-    // Connect to the network and await until client connects
+    // Listen for incoming client connections
     if (listen(server_fd, MAX_CLIENTS - 1) < 0) {
-        perror("TCP Server - Listen Error");
+        perror("TCP Server Mirror - Listen Error");
         exit(EXIT_FAILURE);
     }
 
-    printf("Server listening on port %d...\n", PORT);
+    printf("Mirror listening on port %d...\n", PORT);
 
+    // Accept incoming client connections
     while (1) {
         // Assigning the connecting client info to the file descriptor
         client_fd = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen);
-        if ((num_of_clients >= MAX_CLIENTS && num_of_clients < 2*MAX_CLIENTS) || (num_of_clients >= 2*MAX_CLIENTS && num_of_clients % 2 != 0)) {
-            char mirror_address[IP_LENGTH + PORT_LENGTH + 1] = MIRROR_SERVER_IP_ADDR;
-            char mirror_port[PORT_LENGTH];
-            sprintf(mirror_port, "%d", MIRROR_PORT);
-            strcat(mirror_address, ":");
-            strcat(mirror_address, mirror_port);
-            printf("Max clients reached.\n");
-            if (send(client_fd, mirror_address, strlen(mirror_address), 0) < 0) {
-                perror("send failed");
-                exit(EXIT_FAILURE);
-            }
-            num_of_clients++;
-        } else {
-            if (client_fd < 0) {
-                perror("TCP Server - Accept Error");
-                continue;
-            }
-            if (send(client_fd, CONN_SUCCESS, strlen(CONN_SUCCESS), 0) < 0) {
-                perror("send failed");
-                exit(EXIT_FAILURE);
-            }
-            printf("Client connected.\n");
-            
-            childpid = fork();
-            if (childpid < 0) {
-                perror("TCP Server - Fork Error");
-                exit(EXIT_FAILURE);
-            }
-            if (childpid == 0) {
-                // Child process
-                close(server_fd);
-                int exit_status = processClient(client_fd);
-                if (exit_status == 0) {
-                    printf("Client Disconnected with Success Code.\n");
-                    exit(EXIT_SUCCESS);
-                } else {
-                    printf("Client Disconnected with Error Code.\n");
-                    exit(EXIT_FAILURE);
-                }
+        if (client_fd < 0) {
+            perror("TCP Server Mirror - Accept Error");
+            continue;
+        }
+
+        if (send(client_fd, "success", strlen("success"), 0) < 0) {
+            perror("send failed");
+            exit(EXIT_FAILURE);
+        }
+        printf("Client connected to mirror.\n");
+
+        childpid = fork();
+        if (childpid < 0) {
+            perror("TCP Server Mirror - Fork Error");
+            exit(EXIT_FAILURE);
+        }
+
+        if (childpid == 0) {
+            // Child process
+            close(server_fd);
+            int exit_status = processClient(client_fd);
+            if (exit_status == 0) {
+                printf("Client Disconnected with Success Code.\n");
+                exit(EXIT_SUCCESS);
             } else {
-                // Parent process
-                num_of_clients++;
-                printf("Total Clients connected till now: %d\n", num_of_clients);
-                close(client_fd);
-                while (waitpid(-1, NULL, WNOHANG) > 0);
+                printf("Client Disconnected with Error Code.\n");
+                exit(EXIT_FAILURE);
             }
+        } else {
+            // Parent process
+            num_of_clients++;
+            printf("Total Clients connected till now: %d\n", num_of_clients);
+            close(client_fd);
+            while (waitpid(-1, NULL, WNOHANG) > 0);
         }
     }
 
