@@ -387,7 +387,9 @@ int processClient(int socket_fd) {
         }
         
         buffer[n] = '\0';
+        printf("\n************************************************************\n");
         printf("Command received: %s\n", buffer);
+        printf("************************************************************\n");
         printf("Processing command...\n");
 
         if (strncmp(buffer, FIND_FILE, strlen(FIND_FILE)) == 0) {
@@ -527,7 +529,7 @@ int main(int argc, char *argv[]) {
             exit(EXIT_FAILURE);
         }
 
-        printf("Client connected to mirror.\n");
+        printf("------ Client connected to mirror. ------\n");
 
         // Creating separate specific process for handling
         // single client connection individually
@@ -543,10 +545,10 @@ int main(int argc, char *argv[]) {
             // Handling client requests in the processClient function
             int exit_status = processClient(client_fd);
             if (exit_status == 0) {
-                printf("Client Disconnected with Success Code.\n");
+                printf("------ Client Disconnected with Success Code. ------\n");
                 exit(EXIT_SUCCESS);
             } else {
-                printf("Client Disconnected with Error Code.\n");
+                printf("------ Client Disconnected with Error Code. ------\n");
                 exit(EXIT_FAILURE);
             }
         } else {
