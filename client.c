@@ -1,24 +1,51 @@
+// Using _XOPEN_SOURCE for using strptime
+// date function
 #define _XOPEN_SOURCE
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <errno.h>
+#include <time.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
-#include <errno.h>
-#include <time.h>
 
+// PORT is the port number where the client will
+// send request to for connection with server
 #define PORT 8080
-#define BUFFER_SIZE 1024
+// The IP address of the server where the client
+// send request to for connection with server
 #define SERVER_IP_ADDR "127.0.0.1"
-#define CONN_SUCCESS "success"
-#define TAR_FILE_NAME "temp.tar.gz"
-#define MAX_FILES 6
-#define MAX_FILENAME_LEN 50
+// Maximum length of the IP addresses used in the server
 #define IP_LENGTH 16
+// Maximum length of the port numbers used in the server
 #define PORT_LENGTH 6
+// On successful connection between client and server, the 
+// server sends CONN_SUCCESS message to client
+#define CONN_SUCCESS "success"
+
+// The max buffer size that needs to be stored
+#define BUFFER_SIZE 1024
+// tar.gz file received from the server with
+// all the requested files
+#define TAR_FILE_NAME "temp.tar.gz"
+// Maximum number of filenames that the server can handle
+// in an incoming client command
+#define MAX_FILES 6
+// Maximum filename length that the server can handle while
+// executing the file based client commands
+#define MAX_FILENAME_LEN 50
+
+// Commands used by the client to request information
+// from the server
+#define FIND_FILE "findfile"
+#define S_GET_FILES "sgetfiles"
+#define D_GET_FILES "dgetfiles"
+#define GET_FILES "getfiles"
+#define GET_TAR_GZ "gettargz"
+#define QUIT "quit"
 
 // Function to handle receiving stream of file
 int receive_files(int socket_fd) {
@@ -37,17 +64,20 @@ int receive_files(int socket_fd) {
         return 1;
     }
     long tar_file_size = atol(size_buffer);
-    printf("File size received: %ld \n", tar_file_size);
+    printf("File size to be received: %ld \n", tar_file_size);
 
     char buffer[BUFFER_SIZE];
-
     sprintf(size_buffer, "%ld", tar_file_size);
+
+    // Send acknowledgement to the server for file size received
     if (send(socket_fd, size_buffer, strlen(size_buffer), 0) != strlen(size_buffer)) {
         perror("Error acknowledging to server");
         fclose(fp);
         return 1;
     }
 
+    // If the server has sent tar.gz file size to be 0,
+    // No files found scenario
     if (strcmp(size_buffer, "0") == 0) {
         memset(buffer, 0, BUFFER_SIZE);
         int n = read(socket_fd, buffer, BUFFER_SIZE - 1);
@@ -104,6 +134,8 @@ int validate_dates(char* date1, char* date2) {
     }
 }
 
+// Function to read the arguments sent in the command to determine the files/extensions
+// and to determine the value of the unzip flag
 void read_filenames(char* buffer, char filenames[MAX_FILES][MAX_FILENAME_LEN], int* num_files, int* unzip_flag) {
     char* token;
     char delim[] = " ";
@@ -134,6 +166,7 @@ void read_filenames(char* buffer, char filenames[MAX_FILES][MAX_FILENAME_LEN], i
     *num_files = i;
 }
 
+// Function to handle the sending of commands from client to server
 void send_command(int client_fd, char* buffer) {
     // Send command to server
     if (send(client_fd, buffer, strlen(buffer), 0) != strlen(buffer)) {
@@ -180,13 +213,17 @@ int main(int argc, char const *argv[]) {
     }
 
     if (recv(client_fd, buffer, BUFFER_SIZE, 0) == -1) {
-        perror("Error receiving tar file size from server");
+        perror("TCP Client - Error receiving connection status from server");
     }
 
-    printf("Buffer: %s\n", buffer);
     if (strcmp(buffer, CONN_SUCCESS) == 0) {
         printf("Connected to server successfully.\n");
     } else {
+        // If the server is full, it will ask the client to redirect its
+        // socket connection to the mirror server.
+        // Mirror server IP address and port shall be provided by the server
+        // which will be used by the client to create new socket connection
+        // with the mirror server
         close(client_fd);
         client_fd = 0;
         if ((client_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
@@ -195,22 +232,23 @@ int main(int argc, char const *argv[]) {
         }
         char mirror_ip[IP_LENGTH], mirror_port[PORT_LENGTH];
         char *ip, *port;
+        // Creating copy of buffer to avoid loss of
+        // buffer data while tokenizing
         char buffer_copy[BUFFER_SIZE];
         strcpy(buffer_copy, buffer);
         ip = strtok(buffer_copy, ":");
         port = strtok(NULL, ":");
         strncpy(mirror_ip, ip, sizeof(mirror_ip));
         strncpy(mirror_port, port, sizeof(mirror_port));
-        printf("Port: %s, IP: %s\n", mirror_port, mirror_ip);
         memset(&address, '0', sizeof(address));
         address.sin_family = AF_INET;
         address.sin_port = htons(atoi(mirror_port));
         if (inet_pton(AF_INET, mirror_ip, &address.sin_addr) <= 0) {
-            perror("TCP Client -Invalid Address");
+            perror("TCP Client - Invalid Address");
             exit(EXIT_FAILURE);
         }
 
-        // Connecting to the server
+        // Connecting to the mirror server
         if (connect(client_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
             perror("TCP Client - Connection Error");
             exit(EXIT_FAILURE);
@@ -219,7 +257,7 @@ int main(int argc, char const *argv[]) {
         memset(buffer, 0, sizeof(buffer));
 
         if (recv(client_fd, buffer, BUFFER_SIZE, 0) == -1) {
-            perror("Error receiving tar file size from server");
+            perror("TCP Client - Error receiving connection status from server");
         }
 
         if (strcmp(buffer, CONN_SUCCESS) == 0) {
@@ -237,10 +275,10 @@ int main(int argc, char const *argv[]) {
         buffer[strlen(buffer)-1] = '\0';
 
         // Exit if user types "quit"
-        if (strcmp(buffer, "quit") == 0) {
+        if (strcmp(buffer, QUIT) == 0) {
             send_command(client_fd, buffer);
             break;
-        } else if (strncmp(buffer, "sgetfiles", strlen("sgetfiles")) == 0) {
+        } else if (strncmp(buffer, S_GET_FILES, strlen(S_GET_FILES)) == 0) {
             char unzip_status[BUFFER_SIZE] = "";
             int min_value, max_value;
             sscanf(buffer, "%*s %d %d %s", &min_value, &max_value, unzip_status);
@@ -257,7 +295,7 @@ int main(int argc, char const *argv[]) {
                 strcat(system_call, TAR_FILE_NAME);
                 system(system_call);
             }
-        } else if (strncmp(buffer, "dgetfiles", strlen("dgetfiles")) == 0) {
+        } else if (strncmp(buffer, D_GET_FILES, strlen(D_GET_FILES)) == 0) {
             char unzip_status[BUFFER_SIZE] = "";
             char min_date[BUFFER_SIZE];
             char max_date[BUFFER_SIZE];
@@ -275,7 +313,7 @@ int main(int argc, char const *argv[]) {
                 strcat(system_call, TAR_FILE_NAME);
                 system(system_call);
             }
-        } else if (strncmp(buffer, "getfiles", strlen("getfiles")) == 0) {
+        } else if (strncmp(buffer, GET_FILES, strlen(GET_FILES)) == 0) {
             char filenames[MAX_FILES][MAX_FILENAME_LEN];
             int num_files, unzip_flag;
             send_command(client_fd, buffer);
@@ -287,7 +325,7 @@ int main(int argc, char const *argv[]) {
                 strcat(system_call, TAR_FILE_NAME);
                 system(system_call);
             }
-        } else if (strncmp(buffer, "gettargz", strlen("gettargz")) == 0) {
+        } else if (strncmp(buffer, GET_TAR_GZ, strlen(GET_TAR_GZ)) == 0) {
             char extensions[MAX_FILES][MAX_FILENAME_LEN];
             int num_extensions, unzip_flag;
             send_command(client_fd, buffer);
@@ -299,7 +337,26 @@ int main(int argc, char const *argv[]) {
                 strcat(system_call, TAR_FILE_NAME);
                 system(system_call);
             }
+        } else if (strncmp(buffer, FIND_FILE, strlen(FIND_FILE)) == 0) {
+            send_command(client_fd, buffer);
+            // Receive response from server
+            // bzero(buffer, BUFFER_SIZE);
+            memset(buffer, 0, BUFFER_SIZE);
+            n = read(client_fd, buffer, BUFFER_SIZE - 1);
+            if (n < 0) {
+                perror("TCP Client - Read Error");
+                exit(EXIT_FAILURE);
+            }
+            if (n == 0) {
+                printf("Server disconnected.\n");
+                break;
+            }
+            buffer[n] = '\0';
+            printf("File details: \n%s\n", buffer);
         } else {
+            // If none of the known command is entered and tried to send,
+            // client will send it to the server and the server will
+            // get the same command in response
             send_command(client_fd, buffer);
             // Receive response from server
             // bzero(buffer, BUFFER_SIZE);

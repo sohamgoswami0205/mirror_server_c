@@ -2,38 +2,64 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <sys/socket.h>
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <sys/wait.h>
 #include <errno.h>
 #include <sys/stat.h>
 #include <time.h>
 #include <dirent.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/wait.h>
 
+// PORT is the port number where the server will be deployed
 #define PORT 8080
-#define CONN_SUCCESS "success"
+// MIRROR_PORT is the port number where the mirror server
+// is deployed
 #define MIRROR_PORT 8081
+// The IP address of the mirror server where the main
+// server will redirect the incoming excess clients to
 #define MIRROR_SERVER_IP_ADDR "127.0.0.1"
-// Allowing server to listen to 10 clients at a time
-#define MAX_CLIENTS 4
-#define BUFFER_SIZE 1024
-#define TAR_FILE_NAME "server_temp.tar.gz"
-#define MAX_FILES 6
-#define MAX_FILENAME_LEN 50
+// Maximum length of the IP addresses used in the server
 #define IP_LENGTH 16
+// Maximum length of the port numbers used in the server
 #define PORT_LENGTH 6
+// On successful connection between client and server, the 
+// server sends CONN_SUCCESS message to client
+#define CONN_SUCCESS "success"
+
+// Allowing server to listen to 4 clients before involving
+// the mirror server
+#define MAX_CLIENTS 4
+// The max buffer size that needs to be stored
+#define BUFFER_SIZE 1024
+// Temporary tar.gz file created by the server to
+// be sent to the client
+#define TAR_FILE_NAME "server_temp.tar.gz"
+// Maximum number of filenames that the server can handle
+// in an incoming client command
+#define MAX_FILES 6
+// Maximum filename length that the server can handle while
+// executing the file based client commands
+#define MAX_FILENAME_LEN 50
+
+// Commands used by the client to request information
+// from the server
+#define FIND_FILE "findfile"
+#define S_GET_FILES "sgetfiles"
+#define D_GET_FILES "dgetfiles"
+#define GET_FILES "getfiles"
+#define GET_TAR_GZ "gettargz"
+#define QUIT "quit"
 
 // Function to Find the file in the server from /home/soham
 char* findfile(char* filename) {
-    char *ptr_client_str;
     char str_appended[BUFFER_SIZE];
     char command[BUFFER_SIZE];
     sprintf(command, "find ~/ -name %s -printf '%%f|%%s|%%T@\\n' | head -n 1", filename);
     FILE* fp = popen(command, "r");
     char path[BUFFER_SIZE];
     if (fgets(path, BUFFER_SIZE, fp) != NULL) {
-        printf("File Found.\n");
+        printf("Requested File Found.\n");
         path[strcspn(path, "\n")] = 0; // Remove trailing newline
         // Extract the filename, size, and date from the path string
         char* filename_ptr = strtok(path, "|");
@@ -71,12 +97,13 @@ char* findfile(char* filename) {
         strcpy(str_appended, "File not Found.\n");
     }
     pclose(fp);
-    ptr_client_str = str_appended;
+    char *ptr_client_str = str_appended;
     return ptr_client_str;
 }
 
 // Function to handle sending stream of file
 void send_tar_file(int socket_fd) {
+    int break_flag = 0;
     // Open the tar file in binary read mode
     FILE* fp = fopen(TAR_FILE_NAME, "rb");
     if (!fp) {
@@ -95,12 +122,14 @@ void send_tar_file(int socket_fd) {
         fclose(fp);
         return;
     }
-    printf("Client Acknowledged.\n");
+
+    // Receive acknowledgement from the client for tar file size share
     if (recv(socket_fd, size_buffer, BUFFER_SIZE, 0) == -1) {
         perror("Error sending tar file size to client");
         fclose(fp);
         return;
     }
+    printf("Client Acknowledged.\n");
     printf("File of size %ld being sent.\n", tar_file_size);
 
     // Sending the tar file contents to the client
@@ -109,10 +138,15 @@ void send_tar_file(int socket_fd) {
     while ((n = fread(buffer, sizeof(char), BUFFER_SIZE, fp)) > 0) {
         if (send(socket_fd, buffer, n, 0) != n) {
             perror("Error sending tar file contents to client");
+            break_flag = 1;
             break;
         }
     }
-    printf("File sent successfully\n");
+    if (break_flag) {
+        printf("Unable to send tar.gz file to client\n");
+    } else {
+        printf("File sent successfully\n");
+    }
     fclose(fp);
 }
 
@@ -133,6 +167,8 @@ void dgetfiles(int socket_fd, char* date1, char* date2) {
     send_tar_file(socket_fd);
 }
 
+// Function to find all the files present in directory(s)
+// rooted at dir_name passed as argument
 int find_files(const char *dir_name, const char *filename, char *tar_file) {
     int found = 0;
     DIR *dir;
@@ -140,6 +176,7 @@ int find_files(const char *dir_name, const char *filename, char *tar_file) {
     struct stat file_info;
     char path[PATH_MAX];
 
+    // Open the directory for traversal
     if ((dir = opendir(dir_name)) == NULL) {
         perror("opendir");
         return 0;
@@ -150,13 +187,17 @@ int find_files(const char *dir_name, const char *filename, char *tar_file) {
             continue;
         }
 
+        // Creating path for the entry being checked for
         snprintf(path, PATH_MAX, "%s/%s", dir_name, entry->d_name);
 
+        // Fetching the stats
         if (lstat(path, &file_info) < 0) {
             perror("lstat");
             continue;
         }
 
+        // Recursive call to find_files if the current entry is a directory
+        // to search for the filename inside that directory tree
         if (S_ISDIR(file_info.st_mode)) {
             find_files(path, filename, tar_file);
         } else if (S_ISREG(file_info.st_mode)) {
@@ -173,19 +214,6 @@ int find_files(const char *dir_name, const char *filename, char *tar_file) {
     return found;
 }
 
-int find_file_paths(char *root_dir, char *filename, char *tar_file) {
-    const char *homedir = getenv("HOME");
-    if (homedir == NULL) {
-        printf("Could not get HOME directory\n");
-        return 0;
-    }
-
-    char path[PATH_MAX];
-    snprintf(path, PATH_MAX, "%s/%s", homedir, filename);
-
-    return find_files(homedir, filename, tar_file);
-}
-
 // Function to get the files
 char* getfiles(int socket_fd, char files[MAX_FILES][MAX_FILENAME_LEN], int num_files) {
     // Get the current directory path
@@ -199,20 +227,25 @@ char* getfiles(int socket_fd, char files[MAX_FILES][MAX_FILENAME_LEN], int num_f
     char tar_cmd[BUFFER_SIZE] = "tar -czvf ";
     strcat(tar_cmd, TAR_FILE_NAME);
 
-    // To send only files and not the entire directory path in tar.gz file
-    // strcat(tar_cmd, " --transform \'s#.*/##\' ");
-
     int file_found = 0;
     for (int i = 0; i < num_files; i++) {
-        printf("Filename: %s\n", files[i]);
+        printf("Finding Filename: %s\n", files[i]);
         char file_path[BUFFER_SIZE];
         snprintf(file_path, BUFFER_SIZE, "%s/%s", dir_path, files[i]);
-        
-        file_found = find_file_paths(dir_path, files[i], tar_cmd);
+
+        const char *homedir = getenv("HOME");
+        if (homedir == NULL) {
+            printf("Could not get HOME directory\n");
+            return 0;
+        }
+
+        char path[PATH_MAX];
+        snprintf(path, PATH_MAX, "%s/%s", homedir, files[i]);
+        file_found += find_files(homedir, files[i], tar_cmd);
     }
 
     if (file_found) {
-        printf("Atleast 1 file found\n");
+        printf("File(s) found\n");
         // Run the tar command
         system(tar_cmd);
 
@@ -237,7 +270,8 @@ char* getfiles(int socket_fd, char files[MAX_FILES][MAX_FILENAME_LEN], int num_f
     return NULL;
 }
 
-void gettargz_recursive(const char *dir_path, char extensions[MAX_FILES][MAX_FILENAME_LEN], int num_extensions, FILE *temp_list) {
+// Recursive Function to create a list of matching files with extensions
+void find_gettargz_files(const char *dir_path, char extensions[MAX_FILES][MAX_FILENAME_LEN], int num_extensions, FILE *temp_list) {
     DIR *dir = opendir(dir_path);
     if (!dir) {
         printf("Error: could not open directory %s\n", dir_path);
@@ -254,7 +288,7 @@ void gettargz_recursive(const char *dir_path, char extensions[MAX_FILES][MAX_FIL
                 int len_ext = strlen(extension);
                 int len_name = strlen(name);
                 if (len_name >= len_ext && strcmp(name + len_name - len_ext, extension) == 0) {
-                    // This file has the matching extension, add it to the list
+                    // This file has the matching extension, adding it to the list
                     fprintf(temp_list, "%s/%s\n", dir_path, name);
                     break;
                 }
@@ -263,13 +297,14 @@ void gettargz_recursive(const char *dir_path, char extensions[MAX_FILES][MAX_FIL
             // This is a directory, recursively search it
             char subdir_path[BUFFER_SIZE];
             snprintf(subdir_path, sizeof(subdir_path), "%s/%s", dir_path, entry->d_name);
-            gettargz_recursive(subdir_path, extensions, num_extensions, temp_list);
+            find_gettargz_files(subdir_path, extensions, num_extensions, temp_list);
         }
     }
 
     closedir(dir);
 }
 
+// Function to find and send the tar.gz file with the files with extensions from extensions list
 char* gettargz(int socket_fd, char extensions[MAX_FILES][MAX_FILENAME_LEN], int num_extensions) {
     int file_found = 0;
     // Create a temporary file to store the list of matching files
@@ -279,8 +314,9 @@ char* gettargz(int socket_fd, char extensions[MAX_FILES][MAX_FILENAME_LEN], int 
         return NULL;
     }
 
-    // Recursively search for files with matching extensions
-    gettargz_recursive(getenv("HOME"), extensions, num_extensions, temp_list);
+    // Recursively search for files with matching extensions in the directory tree
+    // starting from the user directory - /home/soham
+    find_gettargz_files(getenv("HOME"), extensions, num_extensions, temp_list);
     rewind(temp_list);
     char filename[BUFFER_SIZE];
 
@@ -320,13 +356,11 @@ char* gettargz(int socket_fd, char extensions[MAX_FILES][MAX_FILENAME_LEN], int 
     return NULL;
 }
 
-void read_filenames(char* buffer, char filenames[MAX_FILES][MAX_FILENAME_LEN], int* num_files, int* unzip_flag) {
+// Function to read the arguments sent in the command to determine the files/extensions
+void read_filenames(char* buffer, char filenames[MAX_FILES][MAX_FILENAME_LEN], int* num_files) {
     char* token;
     char delim[] = " ";
     int i = 0;
-
-    // Set the unzip flag to 0 by default
-    *unzip_flag = 0;
 
     // Get the first token
     token = strtok(buffer, delim);
@@ -337,8 +371,7 @@ void read_filenames(char* buffer, char filenames[MAX_FILES][MAX_FILENAME_LEN], i
     // Read the filenames
     while (token != NULL && i < MAX_FILES) {
         if (strcmp(token, "-u") == 0) {
-            // If "-u" is present, set the unzip flag to 1
-            *unzip_flag = 1;
+            // If "-u" is present, ignore it in server
         } else {
             // Otherwise, store the filename in the array
             strncpy(filenames[i], token, MAX_FILENAME_LEN);
@@ -370,42 +403,42 @@ int processClient(int socket_fd) {
         printf("Command received: %s\n", buffer);
         printf("Processing command...\n");
 
-        if (strncmp(buffer, "findfile", strlen("findfile")) == 0) {
+        if (strncmp(buffer, FIND_FILE, strlen(FIND_FILE)) == 0) {
             // Client asking for finding a file details
             char filename[BUFFER_SIZE];
             sscanf(buffer, "%*s %s", filename);
             printf("Filename: %s\n", filename);
             result = findfile(filename);
-        } else if (strncmp(buffer, "sgetfiles", strlen("sgetfiles")) == 0) {
+        } else if (strncmp(buffer, S_GET_FILES, strlen(S_GET_FILES)) == 0) {
             int min_value, max_value;
             sscanf(buffer, "%*s %d %d", &min_value, &max_value);
             sgetfiles(socket_fd, min_value, max_value);
             result = NULL;
             continue;
-        } else if (strncmp(buffer, "dgetfiles", strlen("dgetfiles")) == 0) {
+        } else if (strncmp(buffer, D_GET_FILES, strlen(D_GET_FILES)) == 0) {
             char min_date[BUFFER_SIZE];
             char max_date[BUFFER_SIZE];
             sscanf(buffer, "%*s %s %s", min_date, max_date);
             dgetfiles(socket_fd, min_date, max_date);
             result = NULL;
             continue;
-        } else if (strncmp(buffer, "getfiles", strlen("getfiles")) == 0) {
+        } else if (strncmp(buffer, GET_FILES, strlen(GET_FILES)) == 0) {
             char filenames[MAX_FILES][MAX_FILENAME_LEN];
-            int num_files, unzip_flag;
-            read_filenames(buffer, filenames, &num_files, &unzip_flag);
+            int num_files;
+            read_filenames(buffer, filenames, &num_files);
             result = getfiles(socket_fd, filenames, num_files);
             if (result == NULL) {
                 continue;
             }
-        } else if (strncmp(buffer, "gettargz", strlen("gettargz")) == 0) {
+        } else if (strncmp(buffer, GET_TAR_GZ, strlen(GET_TAR_GZ)) == 0) {
             char extensions[MAX_FILES][MAX_FILENAME_LEN];
-            int num_extensions, unzip_flag;
-            read_filenames(buffer, extensions, &num_extensions, &unzip_flag);
+            int num_extensions;
+            read_filenames(buffer, extensions, &num_extensions);
             result = gettargz(socket_fd, extensions, num_extensions);
             if (result == NULL) {
                 continue;
             }
-        } else if (strcmp(buffer, "quit") == 0) {
+        } else if (strcmp(buffer, QUIT) == 0) {
             // Client disconnecting from the server
             printf("Client Quitting.\n");
             break;
@@ -426,10 +459,26 @@ int processClient(int socket_fd) {
 }
 
 int main(int argc, char const *argv[]) {
-    int num_of_clients = 0;
-    int server_fd, client_fd, optval;
+    // Counter to keep track of number of client
+    // connections facilitated
+    int num_of_clients = 0, num_of_server_clients = 0;
+    
+    // Integers to store the socket connection
+    // file descriptors
+    int server_fd, client_fd;
+
+    // address will store the details regarding
+    // the socket connections being handled
+    // like port to be connected to, etc.
     struct sockaddr_in address;
     int addrlen = sizeof(address);
+
+    // Integer to store the option value = 1 for forceful
+    // creation of socket as per mentioned attributes
+    int optval = 1;
+
+    // Storing the forked child process for handling
+    // each client
     pid_t childpid;
 
     /**
@@ -443,7 +492,6 @@ int main(int argc, char const *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    optval = 1;
     /**
      * level: SOL_SOCKET
      * option: SO_REUSEADDR - For allowing reuse of local addresses while bind()
@@ -465,7 +513,7 @@ int main(int argc, char const *argv[]) {
     address.sin_addr.s_addr = INADDR_ANY;
     address.sin_port = htons(PORT);
 
-    // Binding the address structure to the socket openend
+    // Binding the address structure to the socket opened
     if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
         perror("TCP Server - Bind Error");
         exit(EXIT_FAILURE);
@@ -482,37 +530,66 @@ int main(int argc, char const *argv[]) {
     while (1) {
         // Assigning the connecting client info to the file descriptor
         client_fd = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen);
+
+        /**
+         * Deciding on whether the server will handle the request or needs to be redirected to the mirror
+         * For connections 1 to 4, server will handle itself
+         * For connections 5 to 8, requests will be redirected to mirror server
+         * For connections from 9, alternate requests will be handled by server
+         * and the other alternate ones will be redirected to mirror server
+         * 9th -> server, 10th -> mirror, 11th -> server ...
+         */
         if ((num_of_clients >= MAX_CLIENTS && num_of_clients < 2*MAX_CLIENTS) || (num_of_clients >= 2*MAX_CLIENTS && num_of_clients % 2 != 0)) {
-            char mirror_address[IP_LENGTH + PORT_LENGTH + 1] = MIRROR_SERVER_IP_ADDR;
+            // Redirection to the mirror handled here
+
+            // Creating string bearing the port number of the mirror server to be
+            // sent to the client for assisting the connection to the mirror
             char mirror_port[PORT_LENGTH];
             sprintf(mirror_port, "%d", MIRROR_PORT);
+
+            // Creating string bearing the ip address and the port number of the mirror server
+            // to be sent to the client for assisting the connection to the mirror
+            char mirror_address[IP_LENGTH + PORT_LENGTH + 1] = MIRROR_SERVER_IP_ADDR;
             strcat(mirror_address, ":");
             strcat(mirror_address, mirror_port);
-            printf("Max clients reached.\n");
+
+            printf("Redirecting client to mirror server.\n");
+            // Sending the mirror ip address and port for the client to create
+            // new socket connection with the mirror server
             if (send(client_fd, mirror_address, strlen(mirror_address), 0) < 0) {
-                perror("send failed");
+                perror("TCP Server - Mirror Address Send failed");
                 exit(EXIT_FAILURE);
             }
+            // Incrementing number of clients to keep track of total clients connected with server and mirror
+            // to make the client connection decisions
             num_of_clients++;
         } else {
+            // Server itself handles the client connection here
+
             if (client_fd < 0) {
                 perror("TCP Server - Accept Error");
                 continue;
             }
+
+            // Acknowledging client socket connection successful
             if (send(client_fd, CONN_SUCCESS, strlen(CONN_SUCCESS), 0) < 0) {
-                perror("send failed");
+                perror("TCP Server - Connection Acknowledgement Send failed");
                 exit(EXIT_FAILURE);
             }
+
             printf("Client connected.\n");
             
+            // Creating separate specific process for handling
+            // single client connection individually
             childpid = fork();
             if (childpid < 0) {
                 perror("TCP Server - Fork Error");
                 exit(EXIT_FAILURE);
             }
             if (childpid == 0) {
-                // Child process
+                // Child process handling client connection
                 close(server_fd);
+                // Handling client requests in the processClient function
                 int exit_status = processClient(client_fd);
                 if (exit_status == 0) {
                     printf("Client Disconnected with Success Code.\n");
@@ -524,8 +601,17 @@ int main(int argc, char const *argv[]) {
             } else {
                 // Parent process
                 num_of_clients++;
-                printf("Total Clients connected till now: %d\n", num_of_clients);
+                num_of_server_clients++;
+                printf("Total Clients connected till now with server and mirror: %d\n", num_of_clients);
+                printf("Total Clients connected to the server: %d\n", num_of_server_clients);
                 close(client_fd);
+                /**
+                 * It returns a value greater than 0 if at least one child process has 
+                 * changed state, or 0 if no child processes have changed state yet.
+                 * -1: Wait for any child process
+                 * NULL: No options being set for waitpid
+                 * WNOHANG: waitpid must return immediately if no child process has exited yet
+                */
                 while (waitpid(-1, NULL, WNOHANG) > 0);
             }
         }
