@@ -92,3 +92,22 @@ must communicate using sockets only.<br /><br />
     The remaining client connections are to be handled by the server and the
     mirror in an alternating manner- (ex: connection 9 is to be handled by the
     server, connection 10 by the mirror, and so on)<br />
+    
+    <strong>TO RUN THE CODE ON MULTIPLE MACHINES IN SAME NETWORK</strong>
+    <ol>
+        <li>Start running the code on 1 machine - Server machine</li>
+        <li>Get the server IP address using the following on Server machine -
+        <ul>
+            <li>"ipconfig" from Windows Terminal or Windows Powershell.</li>
+            <li>"ifconfig" from MAC Terminal.</li>
+        </ul>
+        </li>
+        <li>In the client.c file to be run on te client machine, enter the fetched server IP address in the SERVER_IP_ADDRESS definition string (around line 20)</li>
+        <li>Try executing client code on the client machine and check if connection is successful or in wait state</li>
+        <li>If execution of client code goes to wait state, consider doing one or all of the following and retry. After all of them, execution WILL WORK-
+        <ul>
+            <li>Do port forwarding if your server code is working in WSL. Write the command: "netsh interface portproxy add v4tov4 listenport=8080 listenaddress=<IPV4 address fetched from ipconfig> connectport=8080 connectaddress=$($(wsl hostname -I).Trim());" in the Windows Powershell(running as Administrator) <li>
+            <li>Turn off the active Firewalls, if any</li>
+        </ul>
+        </li>
+    </ol>
