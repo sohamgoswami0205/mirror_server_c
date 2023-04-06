@@ -137,6 +137,8 @@ int validate_dates(char* date1, char* date2) {
 // Function to read the arguments sent in the command to determine the files/extensions
 // and to determine the value of the unzip flag
 void read_filenames(char* buffer, char filenames[MAX_FILES][MAX_FILENAME_LEN], int* num_files, int* unzip_flag) {
+    char buffer_copy[BUFFER_SIZE];
+    strcpy(buffer_copy, buffer);
     char* token;
     char delim[] = " ";
     int i = 0;
@@ -145,7 +147,7 @@ void read_filenames(char* buffer, char filenames[MAX_FILES][MAX_FILENAME_LEN], i
     *unzip_flag = 0;
 
     // Get the first token
-    token = strtok(buffer, delim);
+    token = strtok(buffer_copy, delim);
 
     // Skip the first token (which is "getfiles")
     token = strtok(NULL, delim);
@@ -173,6 +175,188 @@ void send_command(int client_fd, char* buffer) {
         perror("TCP Client - Send Error");
         exit(EXIT_FAILURE);
     }
+}
+
+// Function to validate the commands entered by the user
+// on the client side before sending to the server
+int validate_command(char *buffer) {
+    int buffer_length = strlen(buffer);
+    char buffer_copy[BUFFER_SIZE];
+    strcpy(buffer_copy, buffer);
+    char *valid_commands[] = {FIND_FILE, S_GET_FILES, D_GET_FILES, GET_FILES, GET_TAR_GZ, QUIT};
+    int num_commands = sizeof(valid_commands) / sizeof(valid_commands[0]);
+    char *token;
+    int arg_count = 0;
+    token = strtok(buffer_copy, " ");
+    if (strcmp(token, QUIT) == 0) {
+        while (token != NULL) {
+            arg_count++;
+            token = strtok(NULL, " ");
+        }
+        if (arg_count == 1) {
+            // Valid quit command
+            return 1;
+        } else {
+            // Invalid - Extra arguments
+            printf("Extra arguments found after the command: %s\n", QUIT);
+            return 0;
+        }
+    } else if (strncmp(token, FIND_FILE, strlen(FIND_FILE)) == 0) {
+        while (token != NULL) {
+            arg_count++;
+            token = strtok(NULL, " ");
+        }
+        if (arg_count == 2) {
+            // Valid findfile command
+            return 1;
+        } else if (arg_count < 2){
+            // Invalid - Filename not found
+            printf("File name required after the command: %s\n", FIND_FILE);
+            return 0;
+        } else {
+            // Invalid - Extra arguments
+            printf("Extra arguments found after the command: %s\n", FIND_FILE);
+            return 0;
+        }
+    } else if (strncmp(token, S_GET_FILES, strlen(S_GET_FILES)) == 0) {
+        int min_value, max_value;
+        token = strtok(NULL, " ");
+        if (token == NULL || strcmp(token, "-u") == 0) { 
+            // Invalid - No min or max sizes provided
+            printf("Min and max sizes are not provided for fetching files based on sizes after %s.\n", S_GET_FILES);
+            return 0;
+        }
+        for (int i = 0; i < strlen(token); i++) {
+            if (token[i] < '0' || token[i] > '9') {
+                // Invalid - Min size argument passed with sgetfiles is not integer
+                printf("Value %s passed in argument 1 is not an integer\n", token);
+                return 0;
+            }
+        }
+        min_value = atoi(token);
+        token = strtok(NULL, " ");
+        if (token == NULL) {
+            // Invalid - No max size provided
+            printf("Max size is not provided for fetching files based on sizes.\n");
+            return 0;
+        }
+        for (int i = 0; i < strlen(token); i++) {
+            if (token[i] < '0' || token[i] > '9') {
+                // Invalid - Max size argument passed with sgetfiles is not integer
+                printf("Value %s passed in argument 2 is not an integer\n", token);
+                return 0;
+            }
+        }
+        max_value = atoi(token);
+        if (max_value < min_value) {
+            // Invalid min value in arg 1 should always be less than the max value in arg 2 of command
+            printf("Min value: %d is not lesser than the Max value: %d argument.\n", min_value, max_value);
+            return 0;
+        }
+        token = strtok(NULL, " ");
+        if (token == NULL || strcmp(token, "-u") == 0) {
+            if (token != NULL && strtok(NULL, " ") != NULL) {
+                // Invalid - Extra arguments found after -u
+                printf("Extra arguments found after the command: %s\n", S_GET_FILES);
+                return 0;        
+            }
+            return 1;
+        }        
+        printf("Extra arguments found after the command: %s\n", S_GET_FILES);
+        return 0;
+    } else if (strncmp(token, D_GET_FILES, strlen(D_GET_FILES)) == 0) {
+        char min_date[BUFFER_SIZE];
+        char max_date[BUFFER_SIZE];
+        token = strtok(NULL, " ");
+        if (token == NULL || strcmp(token, "-u") == 0) { 
+            // Invalid - No min or max dates provided
+            printf("Min and max dates are not provided for fetching files based on dates after %s.\n", D_GET_FILES);
+            return 0;
+        }
+        strcpy(min_date, token);
+        token = strtok(NULL, " ");
+        if (token == NULL) {
+            // Invalid - No max date provided
+            printf("Max date is not provided for fetching files based on sizes.\n");
+            return 0;
+        }
+        strcpy(max_date, token);
+        if (validate_dates(min_date, max_date)) {
+            // Invalid - Dates are either invalid or max date is prior min date
+            printf("Dates passed as arguments either do not follow the date format or min date is after max date\n");
+            return 0;
+        }
+        token = strtok(NULL, " ");
+        if (token == NULL || strcmp(token, "-u") == 0) {
+            if (token != NULL && strtok(NULL, " ") != NULL) {
+                // Invalid - Extra arguments after -u
+                printf("Extra arguments found after the command: %s\n", D_GET_FILES);
+                return 0;        
+            }
+            return 1;
+        }        
+        printf("Extra arguments found after the command: %s\n", D_GET_FILES);
+        return 0;
+    } else if (strncmp(token, GET_FILES, strlen(GET_FILES)) == 0) {
+        token = strtok(NULL, " ");
+        if (token == NULL || strcmp(token, "-u") == 0) {
+            // Invalid - No filenames provided
+            printf("Filenames to be fetched are not provided after %s.\n", GET_FILES);
+            return 0;
+        }
+        while(token != NULL && strcmp(token, "-u") != 0) {
+            arg_count++;
+            token = strtok(NULL, " ");
+            if (token == NULL) {
+                if (arg_count <= MAX_FILES) {
+                    return 1;
+                } else {
+                    // Invalid - Extra arguments
+                    printf("Extra arguments found after the command: %s\n", GET_FILES);
+                    return 0;
+                }
+            } else if (strcmp(token, "-u") == 0) {
+                if (arg_count <= MAX_FILES && strtok(NULL, " ") == NULL) {
+                    return 1;
+                } else {
+                    // Invalid - Extra arguments after -u or number of files requested more than MAX_FILES
+                    printf("Extra arguments found after the command: %s\n", GET_FILES);
+                    return 0;
+                }
+            }
+        }
+    } else if (strncmp(token, GET_TAR_GZ, strlen(GET_TAR_GZ)) == 0) {
+        token = strtok(NULL, " ");
+        if (token == NULL || strcmp(token, "-u") == 0) {
+            // Invalid - No extensions found
+            printf("Extensions to fetch files are not provided after %s.\n", GET_TAR_GZ);
+            return 0;
+        }
+        while(token != NULL && strcmp(token, "-u") != 0) {
+            arg_count++;
+            token = strtok(NULL, " ");
+            if (token == NULL) {
+                if (arg_count <= MAX_FILES) {
+                    return 1;
+                } else {
+                    // Invalid - Extra arguments
+                    printf("Extra arguments found after the command: %s\n", GET_TAR_GZ);
+                    return 0;
+                }
+            } else if (strcmp(token, "-u") == 0) {
+                if (arg_count <= MAX_FILES && strtok(NULL, " ") == NULL) {
+                    return 1;
+                } else {
+                    // Invalid - Extra arguments after -u or number of extensions requested more than MAX_FILES
+                    printf("Extra arguments found after the command: %s\n", GET_TAR_GZ);
+                    return 0;
+                }
+            }
+        }
+    }
+    // If none of known commands are being entered by user
+    // send Invalid command
+    return 0;
 }
 
 int main(int argc, char const *argv[]) {
@@ -274,18 +458,34 @@ int main(int argc, char const *argv[]) {
         fgets(buffer, BUFFER_SIZE, stdin);
         buffer[strlen(buffer)-1] = '\0';
 
+        if (!validate_command(buffer)) {
+            printf("Invalid Command: %s\n", buffer);
+            continue;
+        }
+
         // Exit if user types "quit"
         if (strcmp(buffer, QUIT) == 0) {
             send_command(client_fd, buffer);
             break;
+        } else if (strncmp(buffer, FIND_FILE, strlen(FIND_FILE)) == 0) {
+            send_command(client_fd, buffer);
+            // Receive response from server
+            // bzero(buffer, BUFFER_SIZE);
+            memset(buffer, 0, BUFFER_SIZE);
+            n = read(client_fd, buffer, BUFFER_SIZE - 1);
+            if (n < 0) {
+                perror("TCP Client - Read Error");
+                exit(EXIT_FAILURE);
+            }
+            if (n == 0) {
+                printf("Server disconnected.\n");
+                break;
+            }
+            buffer[n] = '\0';
+            printf("File details: \n%s\n", buffer);
         } else if (strncmp(buffer, S_GET_FILES, strlen(S_GET_FILES)) == 0) {
             char unzip_status[BUFFER_SIZE] = "";
-            int min_value, max_value;
-            sscanf(buffer, "%*s %d %d %s", &min_value, &max_value, unzip_status);
-            if (max_value < min_value) {
-                printf("Min value is not lesser than the Max value argument.\n");
-                continue;
-            }
+            sscanf(buffer, "%*s %*d %*d %s", unzip_status);
             send_command(client_fd, buffer);
             int receive_status = receive_files(client_fd);
             int unzip = strncmp(unzip_status, "-u", strlen("-u")) == 0 ? 1 : 0;
@@ -299,11 +499,7 @@ int main(int argc, char const *argv[]) {
             char unzip_status[BUFFER_SIZE] = "";
             char min_date[BUFFER_SIZE];
             char max_date[BUFFER_SIZE];
-            sscanf(buffer, "%*s %s %s", min_date, max_date);
-            if (validate_dates(min_date, max_date)) {
-                printf("Dates passed as arguments either do not follow the date format or min_date is after max_date\n");
-                continue;
-            }
+            sscanf(buffer, "%*s %s %s %s", min_date, max_date, unzip_status);
             send_command(client_fd, buffer);
             int receive_status = receive_files(client_fd);
             int unzip = strncmp(unzip_status, "-u", strlen("-u")) == 0 ? 1 : 0;
@@ -337,22 +533,6 @@ int main(int argc, char const *argv[]) {
                 strcat(system_call, TAR_FILE_NAME);
                 system(system_call);
             }
-        } else if (strncmp(buffer, FIND_FILE, strlen(FIND_FILE)) == 0) {
-            send_command(client_fd, buffer);
-            // Receive response from server
-            // bzero(buffer, BUFFER_SIZE);
-            memset(buffer, 0, BUFFER_SIZE);
-            n = read(client_fd, buffer, BUFFER_SIZE - 1);
-            if (n < 0) {
-                perror("TCP Client - Read Error");
-                exit(EXIT_FAILURE);
-            }
-            if (n == 0) {
-                printf("Server disconnected.\n");
-                break;
-            }
-            buffer[n] = '\0';
-            printf("File details: \n%s\n", buffer);
         } else {
             // If none of the known command is entered and tried to send,
             // client will send it to the server and the server will
