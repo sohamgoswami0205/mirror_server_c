@@ -148,14 +148,15 @@ void read_filenames(char* buffer, char filenames[MAX_FILES][MAX_FILENAME_LEN], i
     // Set the unzip flag to 0 by default
     *unzip_flag = 0;
 
-    // Get the first token
+    // Skip the first token (which is "getfiles")
     token = strtok(buffer_copy, delim);
 
-    // Skip the first token (which is "getfiles")
+    // Get the first token after the command
     token = strtok(NULL, delim);
+    i++;
 
     // Read the filenames
-    while (token != NULL && i < MAX_FILES) {
+    while (token != NULL && i <= MAX_FILES + 1) {
         if (strcmp(token, "-u") == 0) {
             // If "-u" is present, set the unzip flag to 1
             *unzip_flag = 1;
