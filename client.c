@@ -411,7 +411,7 @@ int main(int argc, char const *argv[]) {
         close(client_fd);
         client_fd = 0;
         if ((client_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-            perror("TCP Client - Socket Creation Error\n");
+            perror("TCP Client - Mirror Socket Creation Error\n");
             exit(EXIT_FAILURE);
         }
         char mirror_ip[IP_LENGTH], mirror_port[PORT_LENGTH];
@@ -434,20 +434,20 @@ int main(int argc, char const *argv[]) {
 
         // Connecting to the mirror server
         if (connect(client_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
-            perror("TCP Client - Connection Error");
+            perror("TCP Client - Mirror Connection Error");
             exit(EXIT_FAILURE);
         }
 
         memset(buffer, 0, sizeof(buffer));
 
         if (recv(client_fd, buffer, BUFFER_SIZE, 0) == -1) {
-            perror("TCP Client - Error receiving connection status from server");
+            perror("TCP Client - Error receiving connection status from mirror server");
         }
 
         if (strcmp(buffer, CONN_SUCCESS) == 0) {
-            printf("Connected to server successfully.\n");
+            printf("Connected to mirror server successfully.\n");
         } else {
-            perror("Could not connect to server or mirror");
+            perror("Could not connect to main server or mirror server");
             exit(EXIT_FAILURE);
         }
     }

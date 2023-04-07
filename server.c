@@ -156,6 +156,7 @@ void sgetfiles(int socket_fd, int size1, int size2) {
     char command[BUFFER_SIZE];
     sprintf(command, "find ~/ -type f -size +%d -size -%d -print0 | tar -czvf %s --null -T -", size1, size2, TAR_FILE_NAME);
     FILE* fp = popen(command, "r");
+    pclose(fp);
     send_tar_file(socket_fd);
 }
 
@@ -164,6 +165,7 @@ void dgetfiles(int socket_fd, char* date1, char* date2) {
     char command[BUFFER_SIZE];
     sprintf(command, "find ~/ -type f -newermt \"%s\" ! -newermt \"%s\" -print0 | tar -czvf %s --null -T -", date1, date2, TAR_FILE_NAME);
     FILE* fp = popen(command, "r");
+    pclose(fp);
     send_tar_file(socket_fd);
 }
 
