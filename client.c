@@ -110,27 +110,29 @@ int receive_files(int socket_fd) {
 }
 
 // Function to parse and validate the dates passed
-int validate_dates(char* date1, char* date2) {
-    struct tm tm_date1 = {0};
-    struct tm tm_date2 = {0};
-    time_t time_date1, time_date2;
+int validate_dates(const char *date1, const char *date2) {
+    struct tm tm1 = {0}, tm2 = {0};
+    time_t time1, time2;
 
-    if (strptime(date1, "%Y-%m-%d", &tm_date1) == NULL) {
+    // Parse date1 string
+    if (strptime(date1, "%Y-%m-%d", &tm1) == NULL) {
         printf("Failed to parse date string: %s\n", date1);
         return 1;
     }
-    if (strptime(date2, "%Y-%m-%d", &tm_date2) == NULL) {
+    time1 = mktime(&tm1);
+
+    // Parse date2 string
+    if (strptime(date2, "%Y-%m-%d", &tm2) == NULL) {
         printf("Failed to parse date string: %s\n", date2);
         return 1;
     }
+    time2 = mktime(&tm2);
 
-    time_date1 = mktime(&tm_date1);
-    time_date2 = mktime(&tm_date2);
-
-    if (time_date1 > time_date2) {
-        return 1;
-    } else {
+    // Compare dates
+    if (difftime(time1, time2) <= 0) {
         return 0;
+    } else {
+        return 1;
     }
 }
 
